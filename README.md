@@ -17,9 +17,28 @@
 ## 技術構成
 
 - Python / Flask（`app.py`）
-- 論文データ: OpenAlex API（`https://api.openalex.org`、APIキー不要）
 - 本番起動: gunicorn（Render Free 想定、`render.yaml`）
-- API の応答パースは `parse_work()` という独立関数に分離し、pytest でテストしています
+- API の応答パースはソースごとに独立関数（`parse_crossref_item()`、`parse_europepmc_result()`、`parse_arxiv_feed()`、`parse_doaj_article()`、`parse_work()`）に分離し、pytest でテストしています
+
+### データソース（キーワード検索は複数ソース併用）
+
+いずれも API キー不要の公開 API です。
+
+| ソース | 役割 |
+|---|---|
+| Crossref | 書誌メタデータ（タイトル・著者・年・掲載誌・DOI）の主ソース |
+| Europe PMC | OA 判定と無料フルテキストリンク |
+| arXiv | プレプリント（PDF は常に無料で読める） |
+| DOAJ | OA ジャーナル掲載論文 |
+| OpenAlex | OA 状態・無料リンクの補完（DOI 個別照会）と DOI 検索 |
+
+結果は DOI またはタイトルで重複除去して統合し、画面に「どのソースから何件取れたか／失敗したソース」を表示します。1つのソースが失敗しても、他のソースの結果で検索は成立します（全ソース失敗のときだけ接続エラーを表示）。
+
+**なぜ複数ソース併用なのか**: 以前は OpenAlex の検索エンドポイント単独でしたが、OpenAlex は API キーなしアクセスが「ネットワーク IP 共有の無料日次予算」制になっており、共有 IP のホスティング環境では予算が常時枯渇して検索が使えなくなりました（"Rate limit exceeded / Insufficient budget"）。このため、キー不要で安定して使える Crossref を主ソースとし、OA 判定は Europe PMC・arXiv・DOAJ と OpenAlex の DOI 個別照会（予算消費が小さい）で補う構成に変更しました。
+
+Crossref 由来で OA 状態が分からない結果は、上位数件に限って OpenAlex へ DOI 個別照会して補完します。補完できなかったものは「OA版の有無を確認できませんでした」と表示し、確認済みの非 OA（「オープンアクセス版は見つかりませんでした」）とは文言を区別します。
+
+DOI 検索は OpenAlex を主にし、失敗した場合は Crossref の DOI メタデータでフォールバックします（その場合、OA 状態は「未確認」として表示します）。
 
 ## ローカルで動かす
 
@@ -36,5 +55,5 @@ pip install pytest
 pytest
 ```
 
-テストは実 API には接続せず、OpenAlex 応答のフィクスチャとモックで完結します
-（OAあり→無料リンク生成／OAなし→リンクなし＋明示文、DOI 判定、画面描画、API 失敗時のエラー表示）。
+テストは実 API には接続せず、各ソース応答のフィクスチャとモックで完結します
+（各ソースのパース、統合・重複除去、OpenAlex 補完の成否、ソース障害の分離、OAあり→無料リンク生成／OAなし→リンクなし＋明示文、DOI 判定と Crossref フォールバック、画面描画、API 失敗時のエラー表示）。
